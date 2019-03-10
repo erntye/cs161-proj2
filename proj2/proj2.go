@@ -29,7 +29,7 @@ import (
 	"errors"
 
 	// optional
-	// strconv
+	_ "strconv"
 
 	// if you are looking for fmt, we don't give you fmt, but you can use userlib.DebugMsg
 	// see someUsefulThings() below
@@ -76,13 +76,6 @@ func bytesToUUID(data []byte) (ret uuid.UUID) {
 		ret[x] = data[x]
 	}
 	return
-}
- file record
-type File struct {
-        Filename string
-        FileUUID uuid.UUID
-        FileKey []byte
-	FileSlice int
 }
 
 // The structure definition for a user record
