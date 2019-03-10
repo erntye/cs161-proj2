@@ -74,17 +74,17 @@ func TestAppend(t *testing.T) {
 	v3 := []byte(" and this is the third")
 	v4 := []byte(" and this is the fourth")
 
-	u.AppendFile('file1',v2)
-	u.AppendFile('file1',v3)
-	u.AppendFile('file1',v4)
+	u.AppendFile("file1",v2)
+	u.AppendFile("file1",v3)
+	u.AppendFile("file1",v4)
 
-	vfinal = append(v1,v2,v3,v4...)
+	vfinal := append(append(append(v1,v2...), v3...), v4...)
 	loaded, loadError := u.LoadFile("file1")
 	if loadError != nil {
 		t.Error("Failed to upload and download", loadError)
 	}
 	if !reflect.DeepEqual(loaded, vfinal) {
-		t.Error("Downloaded file is not the same", loaded, vfinal)
+		t.Error("Downloaded file is not the same\n", loaded,"\n", vfinal)
 	}
 }
 
