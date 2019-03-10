@@ -58,6 +58,36 @@ func TestStorage(t *testing.T) {
 	}
 }
 
+func TestAppend(t *testing.T) {
+	// And some more tests, because
+	u, err := GetUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to reload user", err)
+		return
+	}
+	t.Log("Loaded user", u)
+
+	v1 := []byte("This is a test")
+	u.StoreFile("file1", v1)
+
+	v2 := []byte(" and this is the second")
+	v3 := []byte(" and this is the third")
+	v4 := []byte(" and this is the fourth")
+
+	u.AppendFile('file1',v2)
+	u.AppendFile('file1',v3)
+	u.AppendFile('file1',v4)
+
+	vfinal = append(v1,v2,v3,v4...)
+	loaded, loadError := u.LoadFile("file1")
+	if loadError != nil {
+		t.Error("Failed to upload and download", loadError)
+	}
+	if !reflect.DeepEqual(loaded, vfinal) {
+		t.Error("Downloaded file is not the same", loaded, vfinal)
+	}
+}
+
 func TestShare(t *testing.T) {
 	u, err := GetUser("alice", "fubar")
 	if err != nil {
