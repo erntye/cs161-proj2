@@ -84,12 +84,17 @@ type User struct {
 	DSPK userlib.DSSignKey		//Digital Signature Private Key
 	PKEPK userlib.PKEDecKey		//Public Key Encryption Private Key
 	DSSignature []byte			//Digital Signature of user
-	FAT map[string]uuid.UUID 	//create File Allocation Table
+	FAT map[string]FATLL 	//create File Allocation Table
 	Password string 			//User Password
 
 	// You can add other fields here if you want...
 	// Note for JSON to marshal/unmarshal, the fields need to
 	// be public (start with a capital letter)
+}
+
+type FATLL struct {
+	Current uuid.UUID
+	Next *FATLL
 }
 
 // This creates a user.  It will only be called once for a user
@@ -127,7 +132,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userdataptr.Username =  username
 	userdataptr.DSPK = DSSignKey
 	userdataptr.PKEPK= PKEDecKey 
-	userdataptr.FAT = make(map[string]uuid.UUID)
+	userdataptr.FAT = make(map[string]FATLL)
 	userdataptr.Password = password
 
 	// Sign, Encrypt & Store User Data onto DataStore
@@ -241,28 +246,22 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 //
 // The name of the file should NOT be revealed to the datastore!
 func (userdata *User) StoreFile(filename string, data []byte) {
-	var fileUUID uuid.UUID
+	//Generate random bits to create UUID
+	fileUUID := FATLL{Current: uuid.New(), Next: nil}
 
-	//check if file already exists
-	if val,ok := userdata.FAT[filename]; ok{
-		//if exists, get old UUID
-		fileUUID = val
-		userlib.DebugMsg("File already exists in user's FAT.")
-	} else {
-		//else generate random bits to create UUID
-		fileUUID = uuid.New()
-
-		//store UUID in FAT
-		userdata.FAT[filename] = fileUUID
-		userlib.DebugMsg("Inserting new file entry into user's FAT")
-
-		// Update User Data onto DataStore
-		SignEncStoreError := SignEncStoreUser(userdata)
-		if SignEncStoreError != nil {
-		    userlib.DebugMsg(SignEncStoreError.Error())
-		}
+	// Update User Data onto DataStore
+	userdata.FAT[filename] = fileUUID
+	SignEncStoreError := SignEncStoreUser(userdata)
+	if SignEncStoreError != nil {
+	    userlib.DebugMsg(SignEncStoreError.Error())
 	}
 
+	StoreFileAtFATLL(userdata, fileUUID, data)
+  	
+  	return
+}
+
+func StoreFileAtFATLL (userdata *User, fileUUID FATLL, data []byte) {
 	//get public key
 	PKEEncKey, ok := userlib.KeystoreGet(userdata.Username+"PKE")
 	if !ok {
@@ -282,9 +281,7 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 	}
 
 	//store encrypted file in Datastore
-	userlib.DatastoreSet(fileUUID, append(encryptedFile, DSSignature...))
-  	
-  	return
+	userlib.DatastoreSet(fileUUID.Current, append(encryptedFile, DSSignature...))
 }
 
 // This adds on to an existing file.
@@ -294,17 +291,40 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 // metadata you need.
 
 func (userdata *User) AppendFile(filename string, data []byte) (err error) {
-	return
+	var fileUUID FATLL
+
+	//check if file exists
+	if val, ok := userdata.FAT[filename]; ok {
+		//if exists, get old FATLL
+		fileUUID = val
+		userlib.DebugMsg("File already exists in user's FAT.")
+	} else {
+		return errors.New("File does not exist")
+	}
+
+	DSCursor := &fileUUID
+
+	for {
+		// Upon reaching the end of the file
+		if DSCursor.Next == nil {
+			DSCursor.Next = &FATLL{Current: uuid.New(), Next: nil}
+			StoreFileAtFATLL(userdata, *DSCursor.Next, data)
+			break
+		}
+		DSCursor = DSCursor.Next
+	}
+
+	return nil
 }
 
 // This loads a file from the Datastore.
 //
 // It should give an error if the file is corrupted in any way.
 func (userdata *User) LoadFile(filename string) (data []byte, err error) {
-	var fileUUID uuid.UUID
+	var fileUUID FATLL
 
 	//check if file exists
-	if val,ok := userdata.FAT[filename]; ok{
+	if val, ok := userdata.FAT[filename]; ok{
 		//if exists, get old UUID
 		fileUUID = val
 		userlib.DebugMsg("File already exists in user's FAT.")
@@ -319,25 +339,37 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 	}
 
 	// Get File from Datastore
-	SignedFile, DSGetOk := userlib.DatastoreGet(fileUUID)
-	if !DSGetOk {
-		return nil, errors.New("File does not exist")
-	}
+	var DecryptedFile []byte
+	DSCursor := &fileUUID
 
-	// Get DSS Signature
-	EncryptedFile := SignedFile[:len(SignedFile)-256]
-	DSSignature := SignedFile[len(SignedFile)-256:]
+	for {
+		SignedFile, DSGetOk := userlib.DatastoreGet(DSCursor.Current)
+		if !DSGetOk {
+			return nil, errors.New("File does not exist")
+		}
 
-	// Verify File from Datastore
-	VerifyError := userlib.DSVerify(DSVerifyKey, EncryptedFile, DSSignature)
-	if VerifyError != nil {
-	    return nil, VerifyError
-	}
+		// Get DSS Signature
+		EncryptedFile := SignedFile[:len(SignedFile)-256]
+		DSSignature := SignedFile[len(SignedFile)-256:]
 
-	// Decrypt File from Datastore
-	DecryptedFile, DecryptError := userlib.PKEDec(userdata.PKEPK, EncryptedFile)
-	if DecryptError != nil {
-		return nil, DecryptError
+		// Verify File from Datastore
+		VerifyError := userlib.DSVerify(DSVerifyKey, EncryptedFile, DSSignature)
+		if VerifyError != nil {
+		    return nil, VerifyError
+		}
+
+		// Decrypt File from Datastore
+		ToAppend, DecryptError := userlib.PKEDec(userdata.PKEPK, EncryptedFile)
+		if DecryptError != nil {
+			return nil, DecryptError
+		}
+
+		DecryptedFile = append(DecryptedFile, ToAppend...)
+
+		DSCursor = DSCursor.Next
+		if DSCursor == nil {
+			break
+		}
 	}
 
 	// Return file if ok
