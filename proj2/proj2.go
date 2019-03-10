@@ -192,18 +192,21 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 
 	//get encrypted user structure from datastore
 	encryptedUserdata, ok := userlib.DatastoreGet(bytesToUUID([]byte(datastoreKey)[:16]))
-	
+	if !ok{
+		userlib.DebugMsg("DSGet error")
+		return
+	}
 	//decrypt the userdata
 	decryptedUserdata := userlib.SymDec(decryptionKey,encryptedUserdata)
 
 	//get userdata and signature
-	userdataJSON := decryptedUserdata[:len(decryptedUserdata)-16]
-	DSSignature := decryptedUserdata[len(decryptedUserdata)-16:]
+	userdataJSON := decryptedUserdata[:len(decryptedUserdata)-256]
+	DSSignature := decryptedUserdata[len(decryptedUserdata)-256:]
 
 	//Get DS Verify Key Signature
 	DSVerifyKey, ok := userlib.KeystoreGet(username+"DS")
 	if !ok {
-	    userlib.DebugMsg("DSGet error")
+	    userlib.DebugMsg("KSGet error")
 	}
 
 	//Verify Data Integrity and Authenticity
