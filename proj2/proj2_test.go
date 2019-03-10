@@ -22,7 +22,7 @@ func TestInit(t *testing.T) {
 	// You may want to turn it off someday
 	userlib.SetDebugStatus(true)
 	someUsefulThings()
-	userlib.SetDebugStatus(true)
+	userlib.SetDebugStatus(false)
 	u, err := InitUser("alice", "fubar")
 	if err != nil {
 		// t.Error says the test fails

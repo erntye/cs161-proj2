@@ -81,9 +81,11 @@ func bytesToUUID(data []byte) (ret uuid.UUID) {
 // The structure definition for a user record
 type User struct {
 	Username string
-	DSPK userlib.DSSignKey
-	PKEPK userlib.PKEDecKey
-	DSSignature []byte
+	DSPK userlib.DSSignKey		//Digital Signature Private Key
+	PKEPK userlib.PKEDecKey		//Public Key Encryption Private Key
+	DSSignature []byte			//Digital Signature of user
+	FAT map[string]uuid.UUID 	//create File Allocation Table
+
 	// You can add other fields here if you want...
 	// Note for JSON to marshal/unmarshal, the fields need to
 	// be public (start with a capital letter)
@@ -124,9 +126,10 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userdataptr.Username =  username
 	userdataptr.DSPK = DSSignKey
 	userdataptr.PKEPK= PKEDecKey 
+	userdataptr.FAT = make(map[string]uuid.UUID)
 
 	//use password to create key for datastore
-	datastoreKey := userlib.Argon2Key([]byte(password),[]byte(username),256)
+	datastoreKey := userlib.Argon2Key([]byte(password),[]byte(username),16)
 
 	//create byte for userdata
 	userdataJSON, JSONerror := json.Marshal(userdataptr)
@@ -134,16 +137,27 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	    userlib.DebugMsg(JSONerror.Error())
 	}
 
-	//create and store DS for userdata
+	//create and store Signature for userdata
 	DSSignature, DSSignError := userlib.DSSign(userdataptr.DSPK,userdataJSON)
 	if DSSignError != nil {
 	    userlib.DebugMsg(DSSignError.Error())
 	}
  	userlib.DebugMsg(string(DSSignature))
 
-	//store User on Datastore
-	userlib.DatastoreSet(bytesToUUID([]byte(datastoreKey)[:16]),
+ 	//get encryption key  
+ 	encryptedKey, encryptError := userlib.HMACEval(datastoreKey[:16], []byte(password))
+	encryptedKey = encryptedKey[:16]
+	if encryptError != nil {
+	    userlib.DebugMsg(encryptError.Error())
+	}
+
+	//create encrypted userdata
+	encryptedUserdata := userlib.SymEnc(encryptedKey, userlib.RandomBytes(16),
 		append(userdataJSON,DSSignature...))
+
+	//store encrypted User on Datastore
+	userlib.DatastoreSet(bytesToUUID([]byte(datastoreKey)[:16]),
+		encryptedUserdata)
 
 	//post DS on keystore
 	DSStoreerror := userlib.KeystoreSet(username+"DS",DSVerifyKey)
@@ -167,12 +181,24 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	// userdataptr = &userdata
 
 	//create key from password
-	datastoreKey := userlib.Argon2Key([]byte(password),[]byte(username),256)
+	datastoreKey := userlib.Argon2Key([]byte(password),[]byte(username),16)
 
-	//get User struct from key
-	userdataSignature, ok := userlib.DatastoreGet(bytesToUUID([]byte(datastoreKey)[:16]))
-	userdataJSON := userdataSignature[:len(userdataSignature)-256]
-	DSSignature := userdataSignature[len(userdataSignature)-256:]
+	//create decryption key from datastoreKey
+ 	decryptionKey, decryptError := userlib.HMACEval(datastoreKey[:16], []byte(password))
+	decryptionKey = decryptionKey[:16]
+	if decryptError != nil {
+	    userlib.DebugMsg(decryptError.Error())
+	}
+
+	//get encrypted user structure from datastore
+	encryptedUserdata, ok := userlib.DatastoreGet(bytesToUUID([]byte(datastoreKey)[:16]))
+	
+	//decrypt the userdata
+	decryptedUserdata := userlib.SymDec(decryptionKey,encryptedUserdata)
+
+	//get userdata and signature
+	userdataJSON := decryptedUserdata[:len(decryptedUserdata)-16]
+	DSSignature := decryptedUserdata[len(decryptedUserdata)-16:]
 
 	//Get DS Verify Key Signature
 	DSVerifyKey, ok := userlib.KeystoreGet(username+"DS")
@@ -180,7 +206,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	    userlib.DebugMsg("DSGet error")
 	}
 
-	//Verify Data Integrity and AUTHENTICITY
+	//Verify Data Integrity and Authenticity
 	VerifyError := userlib.DSVerify(DSVerifyKey,userdataJSON,DSSignature)
 	if VerifyError != nil {
 	    userlib.DebugMsg(VerifyError.Error())
@@ -199,6 +225,18 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 //
 // The name of the file should NOT be revealed to the datastore!
 func (userdata *User) StoreFile(filename string, data []byte) {
+	
+	//generate random bits to create UUID
+	fileUUID := uuid.New()
+
+	//store UUID in FAT
+	userdata.FAT[filename] = fileUUID
+
+	//encrypt the file
+
+
+	//store file in Datastore
+
 	return
 }
 
