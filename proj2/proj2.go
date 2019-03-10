@@ -85,6 +85,7 @@ type User struct {
 	PKEPK userlib.PKEDecKey		//Public Key Encryption Private Key
 	DSSignature []byte			//Digital Signature of user
 	FAT map[string]uuid.UUID 	//create File Allocation Table
+	Password string 			//User Password
 
 	// You can add other fields here if you want...
 	// Note for JSON to marshal/unmarshal, the fields need to
@@ -127,37 +128,13 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userdataptr.DSPK = DSSignKey
 	userdataptr.PKEPK= PKEDecKey 
 	userdataptr.FAT = make(map[string]uuid.UUID)
+	userdataptr.Password = password
 
-	//use password to create key for datastore
-	datastoreKey := userlib.Argon2Key([]byte(password),[]byte(username),16)
-
-	//create byte for userdata
-	userdataJSON, JSONerror := json.Marshal(userdataptr)
-	if JSONerror != nil {
-	    userlib.DebugMsg(JSONerror.Error())
+	// Sign, Encrypt & Store User Data onto DataStore
+	SignEncStoreError := SignEncStoreUser(userdataptr)
+	if SignEncStoreError != nil {
+	    userlib.DebugMsg(SignEncStoreError.Error())
 	}
-
-	//create and store Signature for userdata
-	DSSignature, DSSignError := userlib.DSSign(userdataptr.DSPK,userdataJSON)
-	if DSSignError != nil {
-	    userlib.DebugMsg(DSSignError.Error())
-	}
- 	userlib.DebugMsg(string(DSSignature))
-
- 	//get encryption key  
- 	encryptedKey, encryptError := userlib.HMACEval(datastoreKey[:16], []byte(password))
-	encryptedKey = encryptedKey[:16]
-	if encryptError != nil {
-	    userlib.DebugMsg(encryptError.Error())
-	}
-
-	//create encrypted userdata
-	encryptedUserdata := userlib.SymEnc(encryptedKey, userlib.RandomBytes(16),
-		append(userdataJSON,DSSignature...))
-
-	//store encrypted User on Datastore
-	userlib.DatastoreSet(bytesToUUID([]byte(datastoreKey)[:16]),
-		encryptedUserdata)
 
 	//post DS on keystore
 	DSStoreerror := userlib.KeystoreSet(username+"DS",DSVerifyKey)
@@ -171,6 +148,42 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	    userlib.DebugMsg(PKEStoreError.Error())
 	}
 	return &userdata, nil
+}
+
+func SignEncStoreUser (userdataptr *User) error {
+	//use password to create key for datastore
+	datastoreKey := userlib.Argon2Key([]byte(userdataptr.Password),[]byte(userdataptr.Username),16)
+
+	//create byte for userdata
+	userdataJSON, JSONerror := json.Marshal(userdataptr)
+	if JSONerror != nil {
+	    return JSONerror
+	}
+
+	//create and store Signature for userdata
+	DSSignature, DSSignError := userlib.DSSign(userdataptr.DSPK,userdataJSON)
+	if DSSignError != nil {
+	    return DSSignError
+	}
+ 	
+ 	userlib.DebugMsg(string(DSSignature))
+
+ 	//get encryption key  
+ 	encryptedKey, encryptError := userlib.HMACEval(datastoreKey[:16], []byte(userdataptr.Password))
+	encryptedKey = encryptedKey[:16]
+	if encryptError != nil {
+	    return encryptError
+	}
+
+	//create encrypted userdata
+	encryptedUserdata := userlib.SymEnc(encryptedKey, userlib.RandomBytes(16),
+		append(userdataJSON,DSSignature...))
+
+	//store encrypted User on Datastore
+	userlib.DatastoreSet(bytesToUUID([]byte(datastoreKey)[:16]),
+		encryptedUserdata)
+
+	return nil
 }
 
 // This fetches the user information from the Datastore.  It should
