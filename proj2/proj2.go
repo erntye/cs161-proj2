@@ -81,7 +81,9 @@ func bytesToUUID(data []byte) (ret uuid.UUID) {
 // The structure definition for a user record
 type User struct {
 	Username string
-
+	DSPK userlib.DSSignKey
+	PKEPK userlib.PKEDecKey
+	DSSignature []byte
 	// You can add other fields here if you want...
 	// Note for JSON to marshal/unmarshal, the fields need to
 	// be public (start with a capital letter)
@@ -106,6 +108,54 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 	userdataptr = &userdata
 
+	//generate dig sig
+	DSSignKey, DSVerifyKey, DSerror := userlib.DSKeyGen()
+	if DSerror != nil {
+	    userlib.DebugMsg(DSerror.Error())
+	}
+
+	//generate assym encrypt
+	PKEEncKey, PKEDecKey, PKEerror := userlib.PKEKeyGen()
+	if PKEerror != nil {
+	    userlib.DebugMsg(PKEerror.Error())
+	}
+
+	//store private key into userdata
+	userdataptr.Username =  username
+	userdataptr.DSPK = DSSignKey
+	userdataptr.PKEPK= PKEDecKey 
+
+	//use password to create key for datastore
+	datastoreKey := userlib.Argon2Key([]byte(password),[]byte(username),256)
+
+	//create byte for userdata
+	userdataJSON, JSONerror := json.Marshal(userdataptr)
+	if JSONerror != nil {
+	    userlib.DebugMsg(JSONerror.Error())
+	}
+
+	//create and store DS for userdata
+	DSSignature, DSSignError := userlib.DSSign(userdataptr.DSPK,userdataJSON)
+	if DSSignError != nil {
+	    userlib.DebugMsg(DSSignError.Error())
+	}
+ 	userlib.DebugMsg(string(DSSignature))
+
+	//store User on Datastore
+	userlib.DatastoreSet(bytesToUUID([]byte(datastoreKey)[:16]),
+		append(userdataJSON,DSSignature...))
+
+	//post DS on keystore
+	DSStoreerror := userlib.KeystoreSet(username+"DS",DSVerifyKey)
+	if DSStoreerror != nil {
+	    userlib.DebugMsg(DSStoreerror.Error())
+	}
+
+	//post PKE on keystore
+	PKEStoreError := userlib.KeystoreSet(username+"PKE",PKEEncKey)
+	if PKEStoreError != nil {
+	    userlib.DebugMsg(PKEStoreError.Error())
+	}
 	return &userdata, nil
 }
 
@@ -113,10 +163,36 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 // fail with an error if the user/password is invalid, or if the user
 // data was corrupted, or if the user can't be found.
 func GetUser(username string, password string) (userdataptr *User, err error) {
-	var userdata User
-	userdataptr = &userdata
+	// var userdata User
+	// userdataptr = &userdata
 
-	return userdataptr, nil
+	//create key from password
+	datastoreKey := userlib.Argon2Key([]byte(password),[]byte(username),256)
+
+	//get User struct from key
+	userdataSignature, ok := userlib.DatastoreGet(bytesToUUID([]byte(datastoreKey)[:16]))
+	userdataJSON := userdataSignature[:len(userdataSignature)-256]
+	DSSignature := userdataSignature[len(userdataSignature)-256:]
+
+	//Get DS Verify Key Signature
+	DSVerifyKey, ok := userlib.KeystoreGet(username+"DS")
+	if !ok {
+	    userlib.DebugMsg("DSGet error")
+	}
+
+	//Verify Data Integrity and AUTHENTICITY
+	VerifyError := userlib.DSVerify(DSVerifyKey,userdataJSON,DSSignature)
+	if VerifyError != nil {
+	    userlib.DebugMsg(VerifyError.Error())
+	}
+
+	//getting userdata from JSON
+	var userdata User
+	json.Unmarshal(userdataJSON, &userdata)
+
+	// userdataptr := &userdata
+	userlib.DebugMsg("DO I WORK")
+	return &userdata, VerifyError
 }
 
 // This stores a file in the datastore.
