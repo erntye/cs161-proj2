@@ -115,13 +115,13 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	//generate dig sig
 	DSSignKey, DSVerifyKey, DSerror := userlib.DSKeyGen()
 	if DSerror != nil {
-	    userlib.DebugMsg(DSerror.Error())
+	    return nil, DSerror
 	}
 
 	//generate assym encrypt
 	PKEEncKey, PKEDecKey, PKEerror := userlib.PKEKeyGen()
 	if PKEerror != nil {
-	    userlib.DebugMsg(PKEerror.Error())
+	    return nil, PKEerror
 	}
 
 	//store private key into userdata
@@ -134,19 +134,19 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	// Sign, Encrypt & Store User Data onto DataStore
 	SignEncStoreError := SignEncStoreUser(userdataptr)
 	if SignEncStoreError != nil {
-	    userlib.DebugMsg(SignEncStoreError.Error())
+		return nil, SignEncStoreError
 	}
 
 	//post DS on keystore
 	DSStoreerror := userlib.KeystoreSet(username+"DS",DSVerifyKey)
 	if DSStoreerror != nil {
-	    userlib.DebugMsg(DSStoreerror.Error())
+		return nil, DSStoreerror
 	}
 
 	//post PKE on keystore
 	PKEStoreError := userlib.KeystoreSet(username+"PKE",PKEEncKey)
 	if PKEStoreError != nil {
-	    userlib.DebugMsg(PKEStoreError.Error())
+		return nil, PKEStoreError
 	}
 	return &userdata, nil
 }
@@ -179,6 +179,9 @@ func SignEncStoreUser (userdataptr *User) error {
 	//create encrypted userdata
 	encryptedUserdata := userlib.SymEnc(encryptedKey, userlib.RandomBytes(16),
 		append(userdataJSON,DSSignature...))
+	if encryptedUserdata = nil {
+		return errors.New("encrypt userdata fail")
+	}
 
 	//store encrypted User on Datastore
 	userlib.DatastoreSet(bytesToUUID([]byte(datastoreKey)[:16]),
@@ -201,14 +204,13 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
  	decryptionKey, decryptError := userlib.HMACEval(datastoreKey[:16], []byte(password))
 	decryptionKey = decryptionKey[:16]
 	if decryptError != nil {
-	    userlib.DebugMsg(decryptError.Error())
+		return nil, decryptError
 	}
 
 	//get encrypted user structure from datastore
 	encryptedUserdata, ok := userlib.DatastoreGet(bytesToUUID([]byte(datastoreKey)[:16]))
 	if !ok{
-		userlib.DebugMsg("DSGet error")
-		return
+		return nil, errors.New("get encrypted data fail")
 	}
 	//decrypt the userdata
 	decryptedUserdata := userlib.SymDec(decryptionKey,encryptedUserdata)
@@ -220,21 +222,19 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	//Get DS Verify Key Signature
 	DSVerifyKey, ok := userlib.KeystoreGet(username+"DS")
 	if !ok {
-	    userlib.DebugMsg("KSGet error")
+	    return nil, errors.New("get DS Verify Key fail")
 	}
 
 	//Verify Data Integrity and Authenticity
 	VerifyError := userlib.DSVerify(DSVerifyKey,userdataJSON,DSSignature)
 	if VerifyError != nil {
-	    userlib.DebugMsg(VerifyError.Error())
+	    return nil, VerifyError
 	}
 
 	//getting userdata from JSON
 	var userdata User
 	json.Unmarshal(userdataJSON, &userdata)
 
-	// userdataptr := &userdata
-	userlib.DebugMsg("DO I WORK")
 	return &userdata, VerifyError
 }
 
@@ -260,14 +260,14 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 		// Update User Data onto DataStore
 		SignEncStoreError := SignEncStoreUser(userdata)
 		if SignEncStoreError != nil {
-		    userlib.DebugMsg(SignEncStoreError.Error())
+		    return nil, SignEncStoreError
 		}
 	}
 
 	//Sign the file
 	DSSignature, DSSignError := userlib.DSSign(userdata.DSPK, data)
 	if DSSignError != nil {
-		userlib.DebugMsg(DSSignError.Error())
+		return nil, DSSignError
 	}
 
 	//get public key
@@ -279,7 +279,7 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 	//encrypt the file
 	encryptedFile, encryptError := userlib.PKEEnc(PKEEncKey, append(data,DSSignature...))
 	if encryptError != nil {
-		userlib.DebugMsg(encryptError.Error())
+		return nil, encryptError
 	}
 
 	//store encrypted file in Datastore
