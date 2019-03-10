@@ -264,12 +264,14 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 		}
 	}
 
+<<<<<<< HEAD
 	//Sign the file
 	DSSignature, DSSignError := userlib.DSSign(userdata.DSPK, data)
 	if DSSignError != nil {
 		return nil, DSSignError
 	}
 
+=======
 	//get public key
 	PKEEncKey, ok := userlib.KeystoreGet(userdata.Username+"PKE")
 	if !ok {
