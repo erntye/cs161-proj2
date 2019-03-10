@@ -178,7 +178,7 @@ func SignEncStoreUser (userdataptr *User) error {
 	//create encrypted userdata
 	encryptedUserdata := userlib.SymEnc(encryptedKey, userlib.RandomBytes(16),
 		append(userdataJSON,DSSignature...))
-	if encryptedUserdata = nil {
+	if encryptedUserdata == nil {
 		return errors.New("encrypt userdata fail")
 	}
 
@@ -259,26 +259,26 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 		// Update User Data onto DataStore
 		SignEncStoreError := SignEncStoreUser(userdata)
 		if SignEncStoreError != nil {
-		    return nil, SignEncStoreError
+		    return 
 		}
 	}
 
 	//get public key
 	PKEEncKey, ok := userlib.KeystoreGet(userdata.Username+"PKE")
 	if !ok {
-		userlib.DebugMsg("keystore get")
+		userlib.DebugMsg("keystore get error ")
 	}
 
 	// Encrypt the file
 	encryptedFile, encryptError := userlib.PKEEnc(PKEEncKey, data)
 	if encryptError != nil {
-		return nil, encryptError
+		userlib.DebugMsg("encryptError.")
 	}
 
 	// Sign the file
 	DSSignature, DSSignError := userlib.DSSign(userdata.DSPK, encryptedFile)
 	if DSSignError != nil {
-		userlib.DebugMsg(DSSignError.Error())
+		userlib.DebugMsg("DSSignError.")
 	}
 
 	//store encrypted file in Datastore
