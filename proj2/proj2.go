@@ -4,6 +4,7 @@ package proj2
 // imports it will break the autograder, and we will be Very Upset.
 
 import (
+	"fmt"
 	// You neet to add with
 	// go get github.com/nweaver/cs161-p2/userlib
 	"github.com/nweaver/cs161-p2/userlib"
@@ -241,19 +242,50 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 //
 // The name of the file should NOT be revealed to the datastore!
 func (userdata *User) StoreFile(filename string, data []byte) {
-	
-	//generate random bits to create UUID
-	fileUUID := uuid.New()
+	var fileUUID uuid.UUID
 
-	//store UUID in FAT
-	userdata.FAT[filename] = fileUUID
+	//check if file already exists
+	if val,ok := userdata.FAT[filename]; ok{
+		//if exists, get old UUID
+		fileUUID = val
+		userlib.DebugMsg("File already exists in user's FAT.")
+	} else {
+		//else generate random bits to create UUID
+		fileUUID = uuid.New()
+
+		//store UUID in FAT
+		userdata.FAT[filename] = fileUUID
+		userlib.DebugMsg("Inserting new file entry into user's FAT")
+
+		// Update User Data onto DataStore
+		SignEncStoreError := SignEncStoreUser(userdata)
+		if SignEncStoreError != nil {
+		    userlib.DebugMsg(SignEncStoreError.Error())
+		}
+	}
+
+	//Sign the file
+	DSSignature, DSSignError := userlib.DSSign(userdata.DSPK, data)
+	if DSSignError != nil {
+		userlib.DebugMsg(DSSignError.Error())
+	}
+
+	//get public key
+	PKEEncKey, ok := userlib.KeystoreGet(userdata.Username+"PKE")
+	if !ok {
+		userlib.DebugMsg("keystore get")
+	}
 
 	//encrypt the file
+	encryptedFile, encryptError := userlib.PKEEnc(PKEEncKey, append(data,DSSignature...))
+	if encryptError != nil {
+		userlib.DebugMsg(encryptError.Error())
+	}
 
-
-	//store file in Datastore
-
-	return
+	//store encrypted file in Datastore
+	userlib.DatastoreSet(fileUUID, encryptedFile)
+  	
+  	return
 }
 
 // This adds on to an existing file.
@@ -270,7 +302,48 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 //
 // It should give an error if the file is corrupted in any way.
 func (userdata *User) LoadFile(filename string) (data []byte, err error) {
-	return
+	var fileUUID uuid.UUID
+
+	//check if file exists
+	if val,ok := userdata.FAT[filename]; ok{
+		//if exists, get old UUID
+		fileUUID = val
+		userlib.DebugMsg("File already exists in user's FAT.")
+	} else {
+		return nil, errors.New("File does not exist")
+	}
+
+	// Get File from Datastore
+	EncryptedFile, DSGetOk := userlib.DatastoreGet(fileUUID)
+	if !DSGetOk {
+		return nil, errors.New("File does not exist")
+	}
+
+	// Decrypt File from Datastore
+	DecryptedFile, DecryptError := userlib.PKEDec(userdata.PKEPK, EncryptedFile)
+	if DecryptError != nil {
+		return nil, DecryptError
+	}
+	
+	// Get DSS Signature
+	FileData := DecryptedFile[:len(DecryptedFile)-256]
+	DSSignature := DecryptedFile[len(DecryptedFile)-256:]
+
+	// Get User's DSVerifyKey from Keystore
+	DSVerifyKey, DSGetOk := userlib.KeystoreGet(userdata.Username+"DS")
+	if !DSGetOk {
+	    return nil, errors.New("Error Obtaining User's DSVerifyKey")
+	}
+
+	// Verify File from Datastore
+	VerifyError := userlib.DSVerify(DSVerifyKey, DecryptedFile, DSSignature)
+	if VerifyError != nil {
+	    return nil, VerifyError
+	}
+
+	// Return file if ok
+	
+	return FileData, nil
 }
 
 // You may want to define what you actually want to pass as a
