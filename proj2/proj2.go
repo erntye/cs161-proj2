@@ -4,7 +4,6 @@ package proj2
 // imports it will break the autograder, and we will be Very Upset.
 
 import (
-	"fmt"
 	// You neet to add with
 	// go get github.com/nweaver/cs161-p2/userlib
 	"github.com/nweaver/cs161-p2/userlib"
@@ -264,28 +263,26 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 		}
 	}
 
-<<<<<<< HEAD
-	//Sign the file
-	DSSignature, DSSignError := userlib.DSSign(userdata.DSPK, data)
-	if DSSignError != nil {
-		return nil, DSSignError
-	}
-
-=======
 	//get public key
 	PKEEncKey, ok := userlib.KeystoreGet(userdata.Username+"PKE")
 	if !ok {
 		userlib.DebugMsg("keystore get")
 	}
 
-	//encrypt the file
-	encryptedFile, encryptError := userlib.PKEEnc(PKEEncKey, append(data,DSSignature...))
+	// Encrypt the file
+	encryptedFile, encryptError := userlib.PKEEnc(PKEEncKey, data)
 	if encryptError != nil {
 		return nil, encryptError
 	}
 
+	// Sign the file
+	DSSignature, DSSignError := userlib.DSSign(userdata.DSPK, encryptedFile)
+	if DSSignError != nil {
+		userlib.DebugMsg(DSSignError.Error())
+	}
+
 	//store encrypted file in Datastore
-	userlib.DatastoreSet(fileUUID, encryptedFile)
+	userlib.DatastoreSet(fileUUID, append(encryptedFile, DSSignature...))
   	
   	return
 }
@@ -315,10 +312,26 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 		return nil, errors.New("File does not exist")
 	}
 
+	// Get User's DSVerifyKey from Keystore
+	DSVerifyKey, DSGetOk := userlib.KeystoreGet(userdata.Username+"DS")
+	if !DSGetOk {
+	    return nil, errors.New("Error Obtaining User's DSVerifyKey")
+	}
+
 	// Get File from Datastore
-	EncryptedFile, DSGetOk := userlib.DatastoreGet(fileUUID)
+	SignedFile, DSGetOk := userlib.DatastoreGet(fileUUID)
 	if !DSGetOk {
 		return nil, errors.New("File does not exist")
+	}
+
+	// Get DSS Signature
+	EncryptedFile := SignedFile[:len(SignedFile)-256]
+	DSSignature := SignedFile[len(SignedFile)-256:]
+
+	// Verify File from Datastore
+	VerifyError := userlib.DSVerify(DSVerifyKey, EncryptedFile, DSSignature)
+	if VerifyError != nil {
+	    return nil, VerifyError
 	}
 
 	// Decrypt File from Datastore
@@ -326,26 +339,9 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 	if DecryptError != nil {
 		return nil, DecryptError
 	}
-	
-	// Get DSS Signature
-	FileData := DecryptedFile[:len(DecryptedFile)-256]
-	DSSignature := DecryptedFile[len(DecryptedFile)-256:]
-
-	// Get User's DSVerifyKey from Keystore
-	DSVerifyKey, DSGetOk := userlib.KeystoreGet(userdata.Username+"DS")
-	if !DSGetOk {
-	    return nil, errors.New("Error Obtaining User's DSVerifyKey")
-	}
-
-	// Verify File from Datastore
-	VerifyError := userlib.DSVerify(DSVerifyKey, DecryptedFile, DSSignature)
-	if VerifyError != nil {
-	    return nil, VerifyError
-	}
 
 	// Return file if ok
-	
-	return FileData, nil
+	return DecryptedFile, nil
 }
 
 // You may want to define what you actually want to pass as a
